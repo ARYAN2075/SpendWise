@@ -1,4 +1,4 @@
-const API = "https://spendwise-api.onrender.com"
+const API_URL = "https://spendwise-production-8c27.up.railway.app";
 
 function setToken(t)  { localStorage.setItem("token", t) }
 function getToken()   { return localStorage.getItem("token") }
