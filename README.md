@@ -21,4 +21,6 @@ Frontend/ – UI using HTML, CSS, JS
 
 ## Run Backend
 pip install -r requirements.txt
+
+-
 uvicorn main:app --reload
