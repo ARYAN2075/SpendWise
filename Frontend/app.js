@@ -18,6 +18,7 @@ function render() {
 
 // ── Currency formatter (Indian system, ₹) ──────────────────────
 function fmt(n) {
+  if (n === undefined || n === null || isNaN(n)) return "₹0"
   const abs = Math.abs(n)
   if (abs >= 10000000) return `₹${(abs / 10000000).toFixed(2)} Cr`
   if (abs >= 100000)   return `₹${(abs / 100000).toFixed(2)} L`
@@ -97,6 +98,7 @@ function signup() {
           <label class="field-label">Password</label>
           <input id="password" type="password" placeholder="Min. 8 characters">
         </div>
+        <div id="auth-error" style="color:#f75f5f;font-size:13px;margin-top:4px;display:none;"></div>
         <button class="auth-submit" onclick="register()">Create account</button>
       </div>
     </div>
@@ -104,14 +106,34 @@ function signup() {
 }
 
 async function register() {
-  const email    = document.getElementById("email").value
+  const email    = document.getElementById("email").value.trim()
   const password = document.getElementById("password").value
-  await fetch(API + "/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password })
-  })
-  navigate("/login")
+  const errEl    = document.getElementById("auth-error")
+  errEl.style.display = "none"
+
+  if (!email || !password) {
+    errEl.textContent = "Please fill in all fields."
+    errEl.style.display = "block"
+    return
+  }
+
+  try {
+    const res = await fetch(API + "/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      errEl.textContent = data.detail || "Registration failed. Please try again."
+      errEl.style.display = "block"
+      return
+    }
+    navigate("/login")
+  } catch (err) {
+    errEl.textContent = "Network error. Please check your connection."
+    errEl.style.display = "block"
+  }
 }
 
 // ============================================================
@@ -132,6 +154,7 @@ function login() {
           <label class="field-label">Password</label>
           <input id="password" type="password" placeholder="••••••••">
         </div>
+        <div id="auth-error" style="color:#f75f5f;font-size:13px;margin-top:4px;display:none;"></div>
         <button class="auth-submit" onclick="loginUser()">Sign in</button>
       </div>
     </div>
@@ -139,22 +162,56 @@ function login() {
 }
 
 async function loginUser() {
-  const email    = document.getElementById("email").value
+  const email    = document.getElementById("email").value.trim()
   const password = document.getElementById("password").value
-  const res  = await fetch(API + "/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password })
-  })
-  const data = await res.json()
-  setToken(data.access_token)
-  navigate("/dashboard")
+  const errEl    = document.getElementById("auth-error")
+  errEl.style.display = "none"
+
+  if (!email || !password) {
+    errEl.textContent = "Please fill in all fields."
+    errEl.style.display = "block"
+    return
+  }
+
+  try {
+    const res = await fetch(API + "/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    })
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      errEl.textContent = data.detail || "Invalid email or password."
+      errEl.style.display = "block"
+      return
+    }
+
+    const data = await res.json()
+    if (!data.access_token) {
+      errEl.textContent = "Login failed. No token received."
+      errEl.style.display = "block"
+      return
+    }
+
+    setToken(data.access_token)
+    navigate("/dashboard")
+  } catch (err) {
+    errEl.textContent = "Network error. Please check your connection."
+    errEl.style.display = "block"
+  }
 }
 
 // ============================================================
 // DASHBOARD SHELL
 // ============================================================
 function dashboard() {
+  // ── Auth guard: redirect to login if no token ──
+  if (!getToken()) {
+    navigate("/login")
+    return
+  }
+
   app.innerHTML = `
     <div class="app">
       <aside class="sidebar">
@@ -210,98 +267,134 @@ function dashboard() {
 }
 
 // ============================================================
-// LOAD DASHBOARD
+// LOAD DASHBOARD (with error handling + auth guard)
 // ============================================================
 async function loadDashboard() {
   setActive('nav-overview')
+  const main = document.getElementById("main")
+  if (!main) return
 
-  const headers = { Authorization: "Bearer " + getToken() }
-  const [sRes, tRes] = await Promise.all([
-    fetch(API + "/analytics/summary",  { headers }),
-    fetch(API + "/transactions/",      { headers })
-  ])
-  const summary = await sRes.json()
-  const tx      = await tRes.json()
-
-  document.getElementById("main").innerHTML = `
-    <div class="rise-in">
-
-      <div class="pg-head">
-        <div>
-          <div class="pg-title">Overview</div>
-          <div class="pg-sub">${today()}</div>
-        </div>
-      </div>
-
-      <div class="cards">
-        <div class="card c-income">
-          <div class="card-tag">Total income</div>
-          <div class="card-val">${fmt(summary.total_income)}</div>
-        </div>
-        <div class="card c-expense">
-          <div class="card-tag">Total expenses</div>
-          <div class="card-val">${fmt(summary.total_expense)}</div>
-        </div>
-        <div class="card c-balance">
-          <div class="card-tag">Net balance</div>
-          <div class="card-val">${fmt(summary.balance)}</div>
-        </div>
-      </div>
-
-      <div class="charts-row">
-        <div class="chart-panel">
-          <div class="chart-panel-title">Income vs Expenses</div>
-          <div class="chart-panel-sub">Allocation breakdown</div>
-          <canvas id="financeChart"></canvas>
-        </div>
-        <div class="chart-panel">
-          <div class="chart-panel-title">By Category</div>
-          <div class="chart-panel-sub">Spending distribution</div>
-          <canvas id="categoryChart"></canvas>
-        </div>
-      </div>
-
-      <div class="tx-panel">
-        <div class="tx-panel-head">
-          <div class="tx-panel-title">Transactions</div>
-          <div class="tx-badge">${tx.length} records</div>
-        </div>
-
-        ${tx.length === 0 ? `
-          <div class="empty-state">
-            <div class="empty-icon">📋</div>
-            <div class="empty-msg">No transactions yet. Add one to get started.</div>
-          </div>
-        ` : `
-        <table>
-          <thead>
-            <tr>
-              <th>Amount</th>
-              <th>Type</th>
-              <th>Category</th>
-              <th>Description</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tx.map(t => `
-              <tr>
-                <td><span class="td-amount ${t.type}">${t.type === 'income' ? '+' : '−'} ${fmt(t.amount)}</span></td>
-                <td><span class="td-pill ${t.type}">${t.type}</span></td>
-                <td><span class="td-cat">${t.category}</span></td>
-                <td><span class="td-desc">${t.description || '—'}</span></td>
-                <td><button class="btn-del" onclick="deleteTx(${t.id})">Delete</button></td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-        `}
-      </div>
-
+  // Show loading state
+  main.innerHTML = `
+    <div style="padding:2rem;color:#8b949e;display:flex;align-items:center;gap:10px;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite">
+        <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+      </svg>
+      Loading overview...
     </div>
+    <style>@keyframes spin { to { transform: rotate(360deg) } }</style>
   `
 
-  createCharts(summary, tx)
+  try {
+    const headers = { Authorization: "Bearer " + getToken() }
+    const [sRes, tRes] = await Promise.all([
+      fetch(API + "/analytics/summary", { headers }),
+      fetch(API + "/transactions/",     { headers })
+    ])
+
+    // Token expired or invalid → redirect to login
+    if (sRes.status === 401 || tRes.status === 401) {
+      logout()
+      return
+    }
+
+    if (!sRes.ok || !tRes.ok) {
+      throw new Error(`Server error: ${sRes.status} / ${tRes.status}`)
+    }
+
+    const summary = await sRes.json()
+    const tx      = await tRes.json()
+
+    main.innerHTML = `
+      <div class="rise-in">
+
+        <div class="pg-head">
+          <div>
+            <div class="pg-title">Overview</div>
+            <div class="pg-sub">${today()}</div>
+          </div>
+        </div>
+
+        <div class="cards">
+          <div class="card c-income">
+            <div class="card-tag">Total income</div>
+            <div class="card-val">${fmt(summary.total_income)}</div>
+          </div>
+          <div class="card c-expense">
+            <div class="card-tag">Total expenses</div>
+            <div class="card-val">${fmt(summary.total_expense)}</div>
+          </div>
+          <div class="card c-balance">
+            <div class="card-tag">Net balance</div>
+            <div class="card-val">${fmt(summary.balance)}</div>
+          </div>
+        </div>
+
+        <div class="charts-row">
+          <div class="chart-panel">
+            <div class="chart-panel-title">Income vs Expenses</div>
+            <div class="chart-panel-sub">Allocation breakdown</div>
+            <canvas id="financeChart"></canvas>
+          </div>
+          <div class="chart-panel">
+            <div class="chart-panel-title">By Category</div>
+            <div class="chart-panel-sub">Spending distribution</div>
+            <canvas id="categoryChart"></canvas>
+          </div>
+        </div>
+
+        <div class="tx-panel">
+          <div class="tx-panel-head">
+            <div class="tx-panel-title">Transactions</div>
+            <div class="tx-badge">${Array.isArray(tx) ? tx.length : 0} records</div>
+          </div>
+
+          ${!Array.isArray(tx) || tx.length === 0 ? `
+            <div class="empty-state">
+              <div class="empty-icon">📋</div>
+              <div class="empty-msg">No transactions yet. Add one to get started.</div>
+            </div>
+          ` : `
+          <table>
+            <thead>
+              <tr>
+                <th>Amount</th>
+                <th>Type</th>
+                <th>Category</th>
+                <th>Description</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tx.map(t => `
+                <tr>
+                  <td><span class="td-amount ${t.type}">${t.type === 'income' ? '+' : '−'} ${fmt(t.amount)}</span></td>
+                  <td><span class="td-pill ${t.type}">${t.type}</span></td>
+                  <td><span class="td-cat">${t.category}</span></td>
+                  <td><span class="td-desc">${t.description || '—'}</span></td>
+                  <td><button class="btn-del" onclick="deleteTx(${t.id})">Delete</button></td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+          `}
+        </div>
+
+      </div>
+    `
+
+    createCharts(summary, tx)
+
+  } catch (err) {
+    console.error("Dashboard load error:", err)
+    main.innerHTML = `
+      <div style="padding:2rem;">
+        <div style="color:#f75f5f;font-size:15px;margin-bottom:8px;">⚠️ Failed to load overview.</div>
+        <div style="color:#8b949e;font-size:13px;margin-bottom:16px;">${err.message || "An unexpected error occurred."}</div>
+        <button class="btn-primary" onclick="loadDashboard()">Try again</button>
+      </div>
+    `
+  }
 }
 
 // ============================================================
@@ -330,12 +423,16 @@ function createCharts(summary, tx) {
     callbacks: { label: ctx => `  ${fmt(ctx.raw)}` }
   }
 
-  new Chart(document.getElementById("financeChart"), {
+  const financeEl = document.getElementById("financeChart")
+  const categoryEl = document.getElementById("categoryChart")
+  if (!financeEl || !categoryEl) return
+
+  new Chart(financeEl, {
     type: "doughnut",
     data: {
       labels: ["Income", "Expenses"],
       datasets: [{
-        data: [summary.total_income, summary.total_expense],
+        data: [summary.total_income || 0, summary.total_expense || 0],
         backgroundColor: ["rgba(61,214,140,0.8)", "rgba(247,95,95,0.8)"],
         borderColor: "#161b22",
         borderWidth: 3,
@@ -351,10 +448,12 @@ function createCharts(summary, tx) {
   })
 
   const cats = {}
-  tx.forEach(t => {
-    if (!cats[t.category]) cats[t.category] = 0
-    cats[t.category] += t.amount
-  })
+  if (Array.isArray(tx)) {
+    tx.forEach(t => {
+      if (!cats[t.category]) cats[t.category] = 0
+      cats[t.category] += t.amount
+    })
+  }
 
   const palette = [
     'rgba(79,142,247,0.85)',
@@ -369,7 +468,7 @@ function createCharts(summary, tx) {
     'rgba(148,163,184,0.85)'
   ]
 
-  new Chart(document.getElementById("categoryChart"), {
+  new Chart(categoryEl, {
     type: "pie",
     data: {
       labels: Object.keys(cats),
@@ -442,6 +541,7 @@ function addTransaction() {
             <input id="description" placeholder="Optional note">
           </div>
 
+          <div id="form-error" style="color:#f75f5f;font-size:13px;margin-top:4px;display:none;"></div>
           <button class="form-submit" onclick="saveTransaction()">Save transaction</button>
         </div>
       </div>
@@ -454,24 +554,47 @@ async function saveTransaction() {
   const type        = document.getElementById("type").value
   const category    = document.getElementById("category").value
   const description = document.getElementById("description").value
+  const errEl       = document.getElementById("form-error")
+  errEl.style.display = "none"
 
-  await fetch(API + "/transactions/", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: "Bearer " + getToken()
-    },
-    body: JSON.stringify({ amount, type, category, description })
-  })
-  loadDashboard()
+  if (!amount || amount <= 0) {
+    errEl.textContent = "Please enter a valid amount."
+    errEl.style.display = "block"
+    return
+  }
+
+  try {
+    const res = await fetch(API + "/transactions/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + getToken()
+      },
+      body: JSON.stringify({ amount, type, category, description })
+    })
+
+    if (res.status === 401) { logout(); return }
+    if (!res.ok) throw new Error(`Server error: ${res.status}`)
+
+    loadDashboard()
+  } catch (err) {
+    errEl.textContent = "Failed to save transaction. Please try again."
+    errEl.style.display = "block"
+    console.error("Save error:", err)
+  }
 }
 
 async function deleteTx(id) {
-  await fetch(API + "/transactions/" + id, {
-    method: "DELETE",
-    headers: { Authorization: "Bearer " + getToken() }
-  })
-  loadDashboard()
+  try {
+    const res = await fetch(API + "/transactions/" + id, {
+      method: "DELETE",
+      headers: { Authorization: "Bearer " + getToken() }
+    })
+    if (res.status === 401) { logout(); return }
+    loadDashboard()
+  } catch (err) {
+    console.error("Delete error:", err)
+  }
 }
 
 window.addEventListener("hashchange", render)
